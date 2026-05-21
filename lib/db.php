@@ -60,6 +60,15 @@ function runMigrations()
             $pdo->exec("ALTER TABLE concepts ADD COLUMN `url_ok_custom` VARCHAR(500) DEFAULT NULL AFTER `max_amount`");
         if (!in_array('visible_en_index', $cols))
             $pdo->exec("ALTER TABLE concepts ADD COLUMN `visible_en_index` TINYINT(1) NOT NULL DEFAULT 1 AFTER `url_ok_custom`");
+        if (!in_array('public_token', $cols))
+            $pdo->exec("ALTER TABLE concepts ADD COLUMN `public_token` VARCHAR(32) DEFAULT NULL AFTER `id`");
+
+        // Generar public_token para conceptos que no lo tengan
+        $sinToken = $pdo->query("SELECT id FROM concepts WHERE public_token IS NULL OR public_token = ''")->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($sinToken as $cid) {
+            $pdo->prepare("UPDATE concepts SET public_token=? WHERE id=?")
+               ->execute(array(bin2hex(random_bytes(8)), (int)$cid));
+        }
 
         // transactions: status_log
         if (!in_array('status_log', array_column($pdo->query("SHOW COLUMNS FROM transactions")->fetchAll(), 'Field')))

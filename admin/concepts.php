@@ -76,12 +76,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 db()->prepare(
                     'INSERT INTO concepts
                      (name,description,icon,is_libre,amount,min_amount,max_amount,
-                      ref_prefix,sort_order,active,visible_en_index,fecha_limite,max_pagos,url_ok_custom)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+                      ref_prefix,sort_order,active,visible_en_index,fecha_limite,max_pagos,url_ok_custom,public_token)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
                 )->execute(array(
                     $name, $desc, $icon, $isLibre, $amount,
                     $minAmt, $maxAmt, $prefix, $sort, $active, $visibleIdx,
-                    $fechaLim, $maxPagos, $urlOkCus
+                    $fechaLim, $maxPagos, $urlOkCus, bin2hex(random_bytes(8))
                 ));
                 Auth::logAction('concept_create', $name);
                 $msg = 'Concepto creado correctamente.';
@@ -352,9 +352,10 @@ $visIdxVal   = isset($fv['visible_en_index']) ? (int)$fv['visible_en_index'] : 1
           <?php echo $c['fecha_limite'] ? date('d/m/Y', strtotime($c['fecha_limite'])) : '<span style="color:#aaa;">&mdash;</span>'; ?>
         </td>
         <td>
-          <input type="text" readonly
+          <?php $cToken = isset($c['public_token']) && $c['public_token'] ? $c['public_token'] : ''; ?>
+        <input type="text" readonly
                  onclick="this.select();document.execCommand('copy');showToast('Link copiado', true);"
-                 value="<?php echo htmlspecialchars($baseUrl . '/index.php?concept=' . $c['id']); ?>"
+                 value="<?php echo $cToken ? htmlspecialchars($baseUrl . '/index.php?concept=' . $cToken) : '(sin token — recarga la pagina)'; ?>"
                  style="font-size:11px;width:180px;cursor:pointer;border:1px solid #ddd;border-radius:5px;padding:4px 6px;"
                  title="Clic para copiar el link">
         </td>

@@ -10,13 +10,13 @@ $proto   = (isset($_SERVER['HTTPS'])&&$_SERVER['HTTPS']==='on')?'https':'http';
 $host    = $_SERVER['HTTP_HOST'];
 $baseUrl = $proto.'://'.$host.rtrim(str_replace('/index.php','',dirname($_SERVER['SCRIPT_NAME'])),'/');
 
-// Si viene ?concept=ID -> mostrar SOLO ese concepto (visible_en_index no aplica para links directos)
+// Si viene ?concept=TOKEN -> mostrar SOLO ese concepto (visible_en_index no aplica para links directos)
 // Si no viene parametro  -> mostrar solo los activos Y visibles en index
-$conceptId = isset($_GET['concept']) ? (int)$_GET['concept'] : 0;
+$conceptToken = isset($_GET['concept']) ? preg_replace('/[^A-Za-z0-9]/', '', $_GET['concept']) : '';
 
-if ($conceptId > 0) {
-    $st = db()->prepare('SELECT * FROM concepts WHERE active=1 AND id=?');
-    $st->execute(array($conceptId));
+if ($conceptToken !== '') {
+    $st = db()->prepare('SELECT * FROM concepts WHERE active=1 AND public_token=?');
+    $st->execute(array($conceptToken));
     $concepts = $st->fetchAll();
     $soloConcepto = true;
 } else {
