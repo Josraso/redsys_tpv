@@ -4,6 +4,17 @@ $siteName = getSetting('site_name', 'TPV');
 
 $ord = preg_replace('/[^A-Za-z0-9]/', '', isset($_GET['Ds_Order']) ? $_GET['Ds_Order'] : '');
 
+// Fallback: recuperar referencia de sesion si Redsys no paso Ds_Order en la URL
+if (!$ord) {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_set_cookie_params(0, '/; SameSite=Lax', '', (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on'), true);
+        session_start();
+    }
+    if (!empty($_SESSION['last_order_ref'])) {
+        $ord = preg_replace('/[^A-Za-z0-9]/', '', $_SESSION['last_order_ref']);
+    }
+}
+
 // Buscar transaccion SIN filtrar por status (race condition: llega antes que notify.php)
 $tx = null;
 if ($ord) {
@@ -96,7 +107,7 @@ $orderRef  = $tx ? $tx['order_ref'] : $ord;
     </div>
     <?php endif; ?>
     <a href="justificante.php?ref=<?php echo urlencode($tx['order_ref']); ?>"
-       class="btn-justificante" target="_blank" rel="noopener">
+       class="btn-justificante">
       &#128196; Descargar justificante de pago
     </a>
 
@@ -117,6 +128,12 @@ $orderRef  = $tx ? $tx['order_ref'] : $ord;
       En breve recibiras un email con la confirmacion y el justificante de pago.
       Esta pagina se actualiza automaticamente&hellip;
     </div>
+    <?php if ($orderRef): ?>
+    <a href="justificante.php?ref=<?php echo urlencode($orderRef); ?>"
+       class="btn-justificante" style="margin-top:20px;">
+      &#128196; Descargar justificante de pago
+    </a>
+    <?php endif; ?>
 
   <?php else: ?>
     <div class="icon-wrap">&#10003;</div>

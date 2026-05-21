@@ -130,6 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     session_start();
                 }
                 $_SESSION['last_concept_token'] = $concept['public_token'];
+                $_SESSION['last_order_ref']     = $orderRef;
 
                 $params = $r->createMerchantParameters();
                 $sig    = $r->generateMerchantSignature(getSetting('redsys_secret_key'), $params, $orderRef);
