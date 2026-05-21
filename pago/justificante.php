@@ -38,10 +38,10 @@ $logoUrl  = $logoPath ? $baseUrl.'/'.$logoPath : '';
     * { box-sizing:border-box; margin:0; padding:0; }
     body { font-family:Arial,sans-serif; color:#1a1a1a; background:#fff; padding:40px; max-width:600px; margin:0 auto; }
     .no-print { text-align:center; margin-bottom:24px; }
-    .btn-print { background:#1a1a1a; color:#fff; border:none; border-radius:8px;
-                 padding:10px 24px; font-size:14px; cursor:pointer; margin-right:8px; }
-    .btn-back  { background:#fff; color:#1a1a1a; border:1px solid #ddd; border-radius:8px;
-                 padding:10px 24px; font-size:14px; cursor:pointer; }
+    .btn-print  { background:#1a1a1a; color:#fff; border:none; border-radius:8px;
+                  padding:10px 24px; font-size:14px; cursor:pointer; margin-right:8px; }
+    .btn-close  { background:#fff; color:#1a1a1a; border:1px solid #ddd; border-radius:8px;
+                  padding:10px 24px; font-size:14px; cursor:pointer; }
     .header { border-bottom:2px solid #1a1a1a; padding-bottom:20px; margin-bottom:24px; display:flex; justify-content:space-between; align-items:flex-end; }
     .header .logo-area img { max-height:60px; max-width:180px; }
     .header .logo-area h1 { font-size:20px; }
@@ -66,7 +66,7 @@ $logoUrl  = $logoPath ? $baseUrl.'/'.$logoPath : '';
 
 <div class="no-print">
   <button class="btn-print" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
-  <button class="btn-back" onclick="history.back()">← Volver</button>
+  <button class="btn-close" onclick="window.close()">✕ Cerrar pestaña</button>
 </div>
 
 <div class="header">

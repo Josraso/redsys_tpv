@@ -28,7 +28,7 @@ if (!empty($_POST['ajax']) && isset($_POST['action'])) {
         $proto  = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
         $host   = $_SERVER['HTTP_HOST'];
         $base   = rtrim(str_replace('/admin', '', dirname($_SERVER['SCRIPT_NAME'])), '/');
-        $url    = $proto . '://' . $host . $base . '/index.php?concept=' . $conceptId;
+        $url    = $proto . '://' . $host . $base . '/index.php?concept=' . $concept['public_token'];
 
         // Precio
         $precio = $concept['is_libre'] ? 'Importe libre' : number_format((float)$concept['amount'], 2, ',', '.') . ' EUR';
@@ -105,7 +105,7 @@ $baseUrl = $proto . '://' . $host . $base;
         <option value="<?php echo (int)$c['id']; ?>"
                 data-name="<?php echo htmlspecialchars($c['name']); ?>"
                 data-precio="<?php echo $c['is_libre'] ? 'Libre' : number_format((float)$c['amount'],2,',','.').' EUR'; ?>"
-                data-url="<?php echo htmlspecialchars($baseUrl . '/index.php?concept=' . $c['id']); ?>">
+                data-url="<?php echo htmlspecialchars($baseUrl . '/index.php?concept=' . $c['public_token']); ?>">
           <?php echo htmlspecialchars($c['icon'] . ' ' . $c['name']); ?>
           (<?php echo $c['is_libre'] ? 'Libre' : number_format((float)$c['amount'],2,',','.') . ' EUR'; ?>)
         </option>

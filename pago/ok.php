@@ -4,7 +4,7 @@ $siteName = getSetting('site_name', 'TPV');
 
 $ord = preg_replace('/[^A-Za-z0-9]/', '', isset($_GET['Ds_Order']) ? $_GET['Ds_Order'] : '');
 
-// Buscar transaccion SIN filtrar por status: puede llegar antes que notify.php (race condition)
+// Buscar transaccion SIN filtrar por status (race condition: llega antes que notify.php)
 $tx = null;
 if ($ord) {
     $st = db()->prepare('SELECT * FROM transactions WHERE order_ref=? LIMIT 1');
@@ -12,28 +12,19 @@ if ($ord) {
     $tx = $st->fetch() ?: null;
 }
 
-// Buscar concepto para: url_ok_custom, public_token (para el boton "Volver")
-$conceptUrl = '../index.php';
-if ($tx && !empty($tx['concept_id'])) {
-    $stc = db()->prepare('SELECT url_ok_custom, public_token FROM concepts WHERE id=?');
+// Redirigir a URL personalizada solo si el pago esta confirmado
+if ($tx && $tx['status'] === 'ok' && !empty($tx['concept_id'])) {
+    $stc = db()->prepare('SELECT url_ok_custom FROM concepts WHERE id=?');
     $stc->execute(array($tx['concept_id']));
-    $concept = $stc->fetch() ?: null;
-    if ($concept) {
-        if (!empty($concept['public_token'])) {
-            $conceptUrl = '../index.php?concept=' . urlencode($concept['public_token']);
-        }
-        // Redirigir a URL personalizada solo si el pago esta confirmado
-        if ($tx['status'] === 'ok' && !empty($concept['url_ok_custom'])
-            && in_array(parse_url($concept['url_ok_custom'], PHP_URL_SCHEME), array('http', 'https'))) {
-            header('Location: ' . $concept['url_ok_custom'] . '?ref=' . urlencode($tx['order_ref']));
-            exit;
-        }
+    $urlCustom = $stc->fetchColumn();
+    if ($urlCustom && in_array(parse_url($urlCustom, PHP_URL_SCHEME), array('http', 'https'))) {
+        header('Location: ' . $urlCustom . '?ref=' . urlencode($tx['order_ref']));
+        exit;
     }
 }
 
 $isOk      = $tx && $tx['status'] === 'ok';
 $isPending = $tx && $tx['status'] === 'pending';
-// Referencia: del registro o del parametro GET (siempre disponible)
 $orderRef  = $tx ? $tx['order_ref'] : $ord;
 ?>
 <!DOCTYPE html>
@@ -51,40 +42,46 @@ $orderRef  = $tx ? $tx['order_ref'] : $ord;
     @keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
     .icon-wrap{width:64px;height:64px;background:#e6f9ee;border-radius:50%;display:flex;
                align-items:center;justify-content:center;margin:0 auto 18px;font-size:28px;color:#1a7a3a;}
+    .icon-spin{width:64px;height:64px;background:#f5f5f5;border-radius:50%;display:flex;
+               align-items:center;justify-content:center;margin:0 auto 18px;}
+    .spinner{width:28px;height:28px;border:3px solid #e0e0e0;border-top-color:#1a1a1a;
+             border-radius:50%;animation:spin .8s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
     .h1{font-size:22px;font-weight:700;color:#1a1a1a;margin-bottom:8px;letter-spacing:-.02em;}
-    .sub{font-size:14px;color:#777;line-height:1.6;margin-bottom:0;}
+    .sub{font-size:14px;color:#777;line-height:1.6;}
     .amt{font-size:42px;font-weight:800;color:#1a7a3a;margin:18px 0 4px;letter-spacing:-.03em;}
     .amt-label{font-size:12px;color:#aaa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:16px;}
-    table{width:100%;border-collapse:collapse;font-size:13px;margin:16px 0;text-align:left;}
-    td{padding:9px 0;border-bottom:1px solid #f0f0f0;}
+    hr{border:none;border-top:1px solid #f0f0f0;margin:20px 0;}
+    table{width:100%;border-collapse:collapse;font-size:13px;margin:0;text-align:left;}
+    td{padding:9px 0;border-bottom:1px solid #f5f5f5;}
     td:first-child{color:#999;width:45%;}
-    td:last-child{font-weight:600;text-align:right;font-size:13px;}
+    td:last-child{font-weight:600;text-align:right;}
+    tr:last-child td{border-bottom:none;}
     .ref-badge{display:inline-block;background:#f5f5f5;border-radius:6px;padding:3px 10px;
                font-family:monospace;font-size:13px;font-weight:600;color:#1a1a1a;}
     .note-ok{background:#f0f9f4;border-radius:8px;padding:11px 14px;font-size:13px;
-             color:#2d6a4f;margin-top:12px;border:1px solid #c3e6cb;}
-    .note-pending{background:#fffbeb;border-radius:8px;padding:11px 14px;font-size:13px;
-                  color:#8a5a00;margin-top:12px;border:1px solid #f0d98a;}
-    .btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:24px;}
-    .btn{display:inline-flex;align-items:center;gap:6px;padding:12px 22px;border-radius:10px;
-         font-size:14px;font-weight:600;text-decoration:none;transition:opacity .15s,transform .1s;}
-    .btn:hover{opacity:.85;}
-    .btn:active{transform:scale(.97);}
-    .btn-green{background:#1a7a3a;color:#fff;}
-    .btn-dark{background:#1a1a1a;color:#fff;}
-    .divider{border:none;border-top:1px solid #f0f0f0;margin:20px 0;}
+             color:#2d6a4f;margin-top:14px;border:1px solid #c3e6cb;text-align:left;}
+    .note-pending{background:#fffbeb;border-radius:10px;padding:14px 16px;font-size:13px;
+                  color:#8a5a00;margin-top:16px;border:1px solid #f0d98a;line-height:1.6;}
+    .btn-justificante{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+                      width:100%;margin-top:24px;padding:15px 24px;border-radius:12px;
+                      background:#1a7a3a;color:#fff;font-size:15px;font-weight:700;
+                      text-decoration:none;letter-spacing:-.01em;
+                      transition:opacity .15s,transform .1s;box-shadow:0 4px 16px rgba(26,122,58,.25);}
+    .btn-justificante:hover{opacity:.88;}
+    .btn-justificante:active{transform:scale(.97);}
   </style>
 </head>
 <body>
 <div class="card">
-  <div class="icon-wrap">&#10003;</div>
-  <div class="h1">Pago realizado</div>
-  <p class="sub">Tu pago ha sido procesado correctamente.</p>
 
   <?php if ($isOk): ?>
+    <div class="icon-wrap">&#10003;</div>
+    <div class="h1">Pago realizado</div>
+    <p class="sub">Tu pago ha sido procesado correctamente.</p>
     <div class="amt"><?php echo number_format((float)$tx['amount'], 2, ',', '.'); ?> &euro;</div>
     <div class="amt-label">Total pagado</div>
-    <hr class="divider">
+    <hr>
     <table>
       <tr><td>Concepto</td><td><?php echo htmlspecialchars($tx['concept_name']); ?></td></tr>
       <tr><td>Referencia</td><td><span class="ref-badge"><?php echo htmlspecialchars($tx['order_ref']); ?></span></td></tr>
@@ -98,33 +95,48 @@ $orderRef  = $tx ? $tx['order_ref'] : $ord;
       &#10003; Confirmacion enviada a <strong><?php echo htmlspecialchars($tx['customer_email']); ?></strong>
     </div>
     <?php endif; ?>
+    <a href="justificante.php?ref=<?php echo urlencode($tx['order_ref']); ?>"
+       class="btn-justificante" target="_blank" rel="noopener">
+      &#128196; Descargar justificante de pago
+    </a>
 
-  <?php elseif ($orderRef): ?>
-    <!-- Estado pending: notify.php todavia no ha actualizado el estado -->
-    <hr class="divider" style="margin-top:16px;">
+  <?php elseif ($isPending || $orderRef): ?>
+    <div class="icon-spin"><div class="spinner"></div></div>
+    <div class="h1">Procesando pago&hellip;</div>
+    <p class="sub">Tu pago esta siendo confirmado.</p>
+    <?php if ($orderRef): ?>
+    <hr>
     <table>
       <tr><td>Referencia</td><td><span class="ref-badge"><?php echo htmlspecialchars($orderRef); ?></span></td></tr>
       <?php if ($tx && !empty($tx['concept_name'])): ?>
       <tr><td>Concepto</td><td><?php echo htmlspecialchars($tx['concept_name']); ?></td></tr>
       <?php endif; ?>
     </table>
+    <?php endif; ?>
     <div class="note-pending">
-      Tu pago esta siendo procesado. En breve recibiras confirmacion por email con todos los detalles.
+      En breve recibiras un email con la confirmacion y el justificante de pago.
+      Esta pagina se actualiza automaticamente&hellip;
     </div>
 
+  <?php else: ?>
+    <div class="icon-wrap">&#10003;</div>
+    <div class="h1">Pago realizado</div>
+    <p class="sub">Tu pago ha sido procesado. Recibiras la confirmacion por email.</p>
   <?php endif; ?>
 
-  <div class="btns">
-    <?php if ($isOk && !empty($tx['order_ref'])): ?>
-    <a href="justificante.php?ref=<?php echo urlencode($tx['order_ref']); ?>"
-       class="btn btn-green" target="_blank" rel="noopener">
-      &#128196; Descargar justificante
-    </a>
-    <?php endif; ?>
-    <a href="<?php echo htmlspecialchars($conceptUrl); ?>" class="btn btn-dark">
-      &larr; Volver
-    </a>
-  </div>
 </div>
+
+<?php if ($isPending): ?>
+<script>
+// Auto-refresh hasta 4 intentos mientras el pago este pendiente
+var n = parseInt(sessionStorage.getItem('ok_polls') || '0');
+if (n < 4) {
+  sessionStorage.setItem('ok_polls', n + 1);
+  setTimeout(function() { location.reload(); }, 2500);
+}
+</script>
+<?php else: ?>
+<script>sessionStorage.removeItem('ok_polls');</script>
+<?php endif; ?>
 </body>
 </html>

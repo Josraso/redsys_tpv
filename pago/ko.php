@@ -9,6 +9,8 @@ $txt  = RedsysAPI::getResponseText($resp);
 
 // Buscar la URL del concepto para el boton "Volver a intentarlo"
 $conceptUrl = '../index.php';
+$token = null;
+
 if ($ord) {
     $stx = db()->prepare('SELECT concept_id FROM transactions WHERE order_ref=? LIMIT 1');
     $stx->execute(array($ord));
@@ -16,11 +18,21 @@ if ($ord) {
     if ($txRow && !empty($txRow['concept_id'])) {
         $stc = db()->prepare('SELECT public_token FROM concepts WHERE id=?');
         $stc->execute(array($txRow['concept_id']));
-        $token = $stc->fetchColumn();
-        if ($token) {
-            $conceptUrl = '../index.php?concept=' . urlencode($token);
-        }
+        $token = $stc->fetchColumn() ?: null;
     }
+}
+
+// Fallback: leer token guardado en sesion justo antes del redireccion a Redsys
+if (!$token) {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_set_cookie_params(0, '/; SameSite=Lax', '', (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on'), true);
+        session_start();
+    }
+    $token = isset($_SESSION['last_concept_token']) ? $_SESSION['last_concept_token'] : null;
+}
+
+if ($token) {
+    $conceptUrl = '../index.php?concept=' . urlencode($token);
 }
 ?>
 <!DOCTYPE html>

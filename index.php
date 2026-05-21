@@ -124,6 +124,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $r->setParameter('DS_MERCHANT_PRODUCTDESCRIPTION', substr($concept['name'], 0, 125));
                 $r->setParameter('DS_MERCHANT_TITULAR',           $custName);
 
+                // Store concept token in session so ko.php can redirect back to the right concept
+                if (session_status() === PHP_SESSION_NONE) {
+                    session_set_cookie_params(0, '/; SameSite=Lax', '', (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on'), true);
+                    session_start();
+                }
+                $_SESSION['last_concept_token'] = $concept['public_token'];
+
                 $params = $r->createMerchantParameters();
                 $sig    = $r->generateMerchantSignature(getSetting('redsys_secret_key'), $params, $orderRef);
                 $url    = getSetting('redsys_environment', 'test') === 'prod'
