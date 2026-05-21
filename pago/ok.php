@@ -10,7 +10,7 @@ if ($tx && $tx['status']==='ok' && !empty($tx['concept_id'])) {
     $stc = db()->prepare('SELECT url_ok_custom FROM concepts WHERE id=?');
     $stc->execute(array($tx['concept_id']));
     $urlCustom = $stc->fetchColumn();
-    if ($urlCustom) {
+    if ($urlCustom && in_array(parse_url($urlCustom, PHP_URL_SCHEME), array('http', 'https'))) {
         header('Location: ' . $urlCustom . '?ref=' . urlencode($tx['order_ref']));
         exit;
     }

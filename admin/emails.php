@@ -7,6 +7,7 @@ if ($isAjax) {
     require_once __DIR__ . '/../lib/Auth.php';
     require_once __DIR__ . '/../lib/Mailer.php';
     Auth::requireLogin();
+    Auth::checkCsrf();
 
     $testTo   = trim(isset($_POST['test_email']) ? $_POST['test_email'] : '');
     $testName = trim(isset($_POST['test_name'])  ? $_POST['test_name']  : 'Test');
@@ -38,6 +39,7 @@ require_once __DIR__ . '/../lib/Mailer.php';
 $msg = ''; $msgType = 'ok';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    Auth::checkCsrf();
     $action = isset($_POST['action']) ? $_POST['action'] : '';
 
     if ($action === 'save') {
@@ -53,8 +55,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $newPass = isset($_POST['smtp_pass']) ? $_POST['smtp_pass'] : '';
         if ($newPass !== '') {
             setSetting('smtp_pass', $newPass);
+            Auth::logAction('email_config_save', 'smtp_pass actualizada');
             $msg = 'Configuracion guardada (contrasena SMTP actualizada).';
         } else {
+            Auth::logAction('email_config_save');
             $msg = 'Configuracion guardada (contrasena SMTP sin cambios).';
         }
     }
@@ -98,6 +102,7 @@ $passLen = strlen(getSetting('smtp_pass'));
 <?php endif; ?>
 
 <form method="POST">
+<input type="hidden" name="_csrf" value="<?php echo htmlspecialchars(Auth::csrfToken()); ?>">
 <input type="hidden" name="action" value="save">
 
 <!-- Metodo de envio -->
@@ -273,6 +278,7 @@ function testMail() {
   fd.append('test_email', email);
   fd.append('test_name', 'Test TPV');
   fd.append('ajax', '1');
+  fd.append('_csrf', _csrf);
 
   fetch('emails.php', { method: 'POST', body: fd })
     .then(function(r) { return r.json(); })

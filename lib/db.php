@@ -58,6 +58,8 @@ function runMigrations()
             $pdo->exec("ALTER TABLE concepts ADD COLUMN `max_amount` DECIMAL(10,2) DEFAULT NULL AFTER `min_amount`");
         if (!in_array('url_ok_custom', $cols))
             $pdo->exec("ALTER TABLE concepts ADD COLUMN `url_ok_custom` VARCHAR(500) DEFAULT NULL AFTER `max_amount`");
+        if (!in_array('visible_en_index', $cols))
+            $pdo->exec("ALTER TABLE concepts ADD COLUMN `visible_en_index` TINYINT(1) NOT NULL DEFAULT 1 AFTER `url_ok_custom`");
 
         // transactions: status_log
         if (!in_array('status_log', array_column($pdo->query("SHOW COLUMNS FROM transactions")->fetchAll(), 'Field')))

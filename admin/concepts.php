@@ -4,11 +4,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['ajax'])) {
     require_once __DIR__ . '/../lib/db.php';
     require_once __DIR__ . '/../lib/Auth.php';
     Auth::requireLogin();
+    Auth::checkCsrf();
 
     $action = isset($_POST['action']) ? $_POST['action'] : '';
     if ($action === 'toggle') {
-        db()->prepare('UPDATE concepts SET active=? WHERE id=?')
-           ->execute(array((int)$_POST['value'], (int)$_POST['id']));
+        $val = (int)$_POST['value'];
+        $id  = (int)$_POST['id'];
+        db()->prepare('UPDATE concepts SET active=? WHERE id=?')->execute(array($val, $id));
+        Auth::logAction('concept_toggle', 'id=' . $id . ' active=' . $val);
         header('Content-Type: application/json');
         echo '{"ok":true}';
     }
@@ -21,6 +24,7 @@ require_once __DIR__ . '/_header.php';
 $msg = ''; $msgType = 'ok';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    Auth::checkCsrf();
     $action = isset($_POST['action']) ? $_POST['action'] : '';
 
     if ($action === 'save') {
@@ -28,10 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name     = trim(htmlspecialchars(isset($_POST['name']) ? $_POST['name'] : ''));
         $desc     = trim(htmlspecialchars(isset($_POST['description']) ? $_POST['description'] : ''));
         $icon     = trim(isset($_POST['icon']) ? $_POST['icon'] : '');
-
-        // is_libre viene como campo hidden con valor '0' o '1' — usar intval NO isset
         $isLibre  = (int)(isset($_POST['is_libre']) ? $_POST['is_libre'] : 0);
-
         $amount   = $isLibre ? null : round((float)str_replace(',', '.', isset($_POST['amount']) ? $_POST['amount'] : '0'), 2);
         $minAmt   = ($isLibre && isset($_POST['min_amount']) && $_POST['min_amount'] !== '')
                     ? round((float)str_replace(',', '.', $_POST['min_amount']), 2) : null;
@@ -39,46 +40,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ? round((float)str_replace(',', '.', $_POST['max_amount']), 2) : null;
         $prefix   = strtoupper(preg_replace('/[^A-Z0-9]/', '', isset($_POST['ref_prefix']) ? $_POST['ref_prefix'] : 'PAY'));
         if (!$prefix) $prefix = 'PAY';
-        $sort     = (int)(isset($_POST['sort_order']) ? $_POST['sort_order'] : 0);
-        $active   = (int)(isset($_POST['active']) ? $_POST['active'] : 0);
-        $fechaLim = (isset($_POST['fecha_limite']) && $_POST['fecha_limite'] !== '') ? $_POST['fecha_limite'] : null;
-        $maxPagos = (isset($_POST['max_pagos']) && $_POST['max_pagos'] !== '') ? (int)$_POST['max_pagos'] : null;
-        $urlOkCus = (isset($_POST['url_ok_custom']) && trim($_POST['url_ok_custom']) !== '') ? trim($_POST['url_ok_custom']) : null;
+        $sort          = (int)(isset($_POST['sort_order']) ? $_POST['sort_order'] : 0);
+        $active        = (int)(isset($_POST['active']) ? $_POST['active'] : 0);
+        $visibleIdx    = (int)(isset($_POST['visible_en_index']) ? $_POST['visible_en_index'] : 0);
+        $fechaLim      = (isset($_POST['fecha_limite']) && $_POST['fecha_limite'] !== '') ? $_POST['fecha_limite'] : null;
+        $maxPagos      = (isset($_POST['max_pagos']) && $_POST['max_pagos'] !== '') ? (int)$_POST['max_pagos'] : null;
+        $urlOkCusRaw   = isset($_POST['url_ok_custom']) ? trim($_POST['url_ok_custom']) : '';
+        $urlOkCus      = $urlOkCusRaw !== '' ? $urlOkCusRaw : null;
 
         if (!$name) {
             $msg = 'El nombre es obligatorio.'; $msgType = 'err';
         } elseif ($minAmt !== null && $maxAmt !== null && $minAmt > $maxAmt) {
             $msg = 'El importe minimo no puede ser mayor que el maximo.'; $msgType = 'err';
-        } else {
+        } elseif ($urlOkCus !== null) {
+            $scheme = parse_url($urlOkCus, PHP_URL_SCHEME);
+            if (!in_array($scheme, array('http', 'https'))) {
+                $msg = 'La URL de exito personalizada debe comenzar por https:// o http://.'; $msgType = 'err';
+            }
+        }
+
+        if ($msgType !== 'err') {
             if ($id) {
                 db()->prepare(
                     'UPDATE concepts SET name=?,description=?,icon=?,is_libre=?,amount=?,
-                     min_amount=?,max_amount=?,ref_prefix=?,sort_order=?,active=?,
+                     min_amount=?,max_amount=?,ref_prefix=?,sort_order=?,active=?,visible_en_index=?,
                      fecha_limite=?,max_pagos=?,url_ok_custom=?,updated_at=NOW() WHERE id=?'
                 )->execute(array(
                     $name, $desc, $icon, $isLibre, $amount,
-                    $minAmt, $maxAmt, $prefix, $sort, $active,
+                    $minAmt, $maxAmt, $prefix, $sort, $active, $visibleIdx,
                     $fechaLim, $maxPagos, $urlOkCus, $id
                 ));
+                Auth::logAction('concept_edit', $name);
                 $msg = 'Concepto actualizado correctamente.';
             } else {
                 db()->prepare(
                     'INSERT INTO concepts
                      (name,description,icon,is_libre,amount,min_amount,max_amount,
-                      ref_prefix,sort_order,active,fecha_limite,max_pagos,url_ok_custom)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+                      ref_prefix,sort_order,active,visible_en_index,fecha_limite,max_pagos,url_ok_custom)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
                 )->execute(array(
                     $name, $desc, $icon, $isLibre, $amount,
-                    $minAmt, $maxAmt, $prefix, $sort, $active,
+                    $minAmt, $maxAmt, $prefix, $sort, $active, $visibleIdx,
                     $fechaLim, $maxPagos, $urlOkCus
                 ));
+                Auth::logAction('concept_create', $name);
                 $msg = 'Concepto creado correctamente.';
             }
         }
     }
 
     if ($action === 'delete') {
-        db()->prepare('DELETE FROM concepts WHERE id=?')->execute(array((int)$_POST['id']));
+        $delId = (int)$_POST['id'];
+        $delName = db()->prepare('SELECT name FROM concepts WHERE id=?');
+        $delName->execute(array($delId));
+        $delNameVal = $delName->fetchColumn();
+        db()->prepare('DELETE FROM concepts WHERE id=?')->execute(array($delId));
+        Auth::logAction('concept_delete', $delNameVal ?: 'id=' . $delId);
         $msg = 'Concepto eliminado.';
     }
 }
@@ -101,19 +118,18 @@ $pagosCount = array();
 $rows = db()->query("SELECT concept_id, COUNT(*) as cnt FROM transactions WHERE status='ok' GROUP BY concept_id")->fetchAll();
 foreach ($rows as $r) $pagosCount[(int)$r['concept_id']] = (int)$r['cnt'];
 
-// Valores del formulario (para repoblar si hay error)
 $fv = $edit ? $edit : array(
     'id'=>0,'name'=>'','description'=>'','icon'=>'','is_libre'=>0,'amount'=>'',
     'min_amount'=>'','max_amount'=>'','ref_prefix'=>'PAY','sort_order'=>0,'active'=>1,
-    'fecha_limite'=>'','max_pagos'=>'','url_ok_custom'=>''
+    'visible_en_index'=>1,'fecha_limite'=>'','max_pagos'=>'','url_ok_custom'=>''
 );
-// Si hubo error en POST, usar valores del POST
 if ($msgType === 'err' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     foreach ($fv as $k => $v) {
         if (isset($_POST[$k])) $fv[$k] = $_POST[$k];
     }
 }
-$isLibreVal = (int)$fv['is_libre'];
+$isLibreVal  = (int)$fv['is_libre'];
+$visIdxVal   = isset($fv['visible_en_index']) ? (int)$fv['visible_en_index'] : 1;
 ?>
 
 <?php if ($msg): ?>
@@ -124,10 +140,11 @@ $isLibreVal = (int)$fv['is_libre'];
 <div class="card">
   <div class="card-t"><?php echo $edit ? 'Editar concepto' : 'Nuevo concepto'; ?></div>
   <form method="POST" action="concepts.php">
+    <input type="hidden" name="_csrf" value="<?php echo htmlspecialchars(Auth::csrfToken()); ?>">
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="id" value="<?php echo (int)$fv['id']; ?>">
-    <!-- active como hidden + checkbox para que siempre se envie -->
     <input type="hidden" name="active" value="0">
+    <input type="hidden" name="visible_en_index" value="0">
 
     <div class="r2">
       <div class="field"><label>Nombre *</label>
@@ -151,10 +168,7 @@ $isLibreVal = (int)$fv['is_libre'];
     <!-- Importe -->
     <div style="background:#f9f9f9;border:1px solid #eee;border-radius:8px;padding:14px;margin-bottom:12px;">
       <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Importe</div>
-
-      <!-- Campo hidden que controla is_libre real -->
       <input type="hidden" name="is_libre" id="is-libre-val" value="<?php echo $isLibreVal; ?>">
-
       <div style="display:flex;gap:20px;margin-bottom:12px;">
         <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;">
           <input type="radio" name="_tipo" value="fijo"
@@ -170,7 +184,6 @@ $isLibreVal = (int)$fv['is_libre'];
           <span style="color:#888;font-size:12px;">(el cliente introduce el importe)</span>
         </label>
       </div>
-
       <div id="bloque-fijo" style="display:<?php echo $isLibreVal ? 'none' : 'block'; ?>;">
         <div class="field" style="max-width:200px;"><label>Importe (EUR)</label>
           <input type="number" name="amount" step="0.01" min="0"
@@ -178,7 +191,6 @@ $isLibreVal = (int)$fv['is_libre'];
                  placeholder="45.00">
         </div>
       </div>
-
       <div id="bloque-libre" style="display:<?php echo $isLibreVal ? 'block' : 'none'; ?>;">
         <div class="r3">
           <div class="field"><label>Importe minimo (EUR)</label>
@@ -220,7 +232,7 @@ $isLibreVal = (int)$fv['is_libre'];
           <input type="url" name="url_ok_custom"
                  value="<?php echo htmlspecialchars($fv['url_ok_custom'] ?: ''); ?>"
                  placeholder="https://tudominio.com/gracias">
-          <p style="font-size:11px;color:#aaa;margin-top:3px;">Si no, usa la pagina generica</p>
+          <p style="font-size:11px;color:#aaa;margin-top:3px;">Debe empezar por https://</p>
         </div>
       </div>
     </div>
@@ -237,12 +249,16 @@ $isLibreVal = (int)$fv['is_libre'];
                value="<?php echo (int)$fv['sort_order']; ?>"
                style="width:80px;">
       </div>
-      <div class="field">
+      <div class="field" style="display:flex;flex-direction:column;justify-content:flex-end;gap:6px;padding-bottom:2px;">
         <label style="display:flex;align-items:center;gap:7px;margin-top:22px;cursor:pointer;font-size:13px;">
-          <!-- El hidden name="active" value="0" de arriba actua de base, este checkbox sobreescribe con 1 -->
           <input type="checkbox" name="active" value="1"
                  <?php echo $fv['active'] ? 'checked' : ''; ?>>
-          Activo (visible en pagina de pago)
+          Activo
+        </label>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px;">
+          <input type="checkbox" name="visible_en_index" value="1"
+                 <?php echo $visIdxVal ? 'checked' : ''; ?>>
+          Visible en pagina principal
         </label>
       </div>
     </div>
@@ -262,17 +278,18 @@ $isLibreVal = (int)$fv['is_libre'];
   <div style="overflow-x:auto;">
   <table>
     <thead>
-      <tr><th>Activo</th><th>Concepto</th><th>Importe</th><th>Pagos OK</th><th>Plazas</th><th>Fecha limite</th><th>Link directo</th><th>Acciones</th></tr>
+      <tr><th>Activo</th><th>Index</th><th>Concepto</th><th>Importe</th><th>Pagos OK</th><th>Plazas</th><th>Fecha limite</th><th>Link directo</th><th>Acciones</th></tr>
     </thead>
     <tbody>
     <?php if (empty($concepts)): ?>
-      <tr><td colspan="8" style="text-align:center;color:#aaa;padding:18px;">No hay conceptos creados</td></tr>
+      <tr><td colspan="9" style="text-align:center;color:#aaa;padding:18px;">No hay conceptos creados</td></tr>
     <?php endif; ?>
     <?php foreach ($concepts as $c):
       $pagosOk  = isset($pagosCount[(int)$c['id']]) ? $pagosCount[(int)$c['id']] : 0;
       $cerrado  = false; $cerradoTxt = '';
       if ($c['fecha_limite'] && $c['fecha_limite'] < date('Y-m-d')) { $cerrado = true; $cerradoTxt = 'Fecha limite'; }
       if ($c['max_pagos'] && $pagosOk >= (int)$c['max_pagos']) { $cerrado = true; $cerradoTxt = 'Plazas completas'; }
+      $visIdx = isset($c['visible_en_index']) ? (int)$c['visible_en_index'] : 1;
     ?>
       <tr style="<?php echo $cerrado ? 'opacity:.65' : ''; ?>">
         <td>
@@ -281,6 +298,13 @@ $isLibreVal = (int)$fv['is_libre'];
                    onchange="toggleC(<?php echo (int)$c['id']; ?>, this.checked)">
             <span class="sl"></span>
           </label>
+        </td>
+        <td style="text-align:center;">
+          <?php if ($visIdx): ?>
+            <span style="color:#1a7a3a;font-size:14px;" title="Visible en index">&#10003;</span>
+          <?php else: ?>
+            <span style="color:#ccc;font-size:14px;" title="Oculto en index">&mdash;</span>
+          <?php endif; ?>
         </td>
         <td>
           <div style="font-weight:500;"><?php echo htmlspecialchars($c['icon'] . ' ' . $c['name']); ?></div>
@@ -339,6 +363,7 @@ $isLibreVal = (int)$fv['is_libre'];
           <a href="concepto_stats.php?id=<?php echo (int)$c['id']; ?>" class="btn-s">Stats</a>
           <form method="POST" action="concepts.php" style="display:inline;"
                 onsubmit="return confirm('Eliminar este concepto? Los pagos existentes no se borran.')">
+            <input type="hidden" name="_csrf" value="<?php echo htmlspecialchars(Auth::csrfToken()); ?>">
             <input type="hidden" name="action" value="delete">
             <input type="hidden" name="id" value="<?php echo (int)$c['id']; ?>">
             <button type="submit" class="btn-s" style="color:#c00;border-color:#fcc;">Eliminar</button>
@@ -353,7 +378,7 @@ $isLibreVal = (int)$fv['is_libre'];
 
 <div id="toast-c" style="display:none;position:fixed;bottom:24px;right:24px;background:#1a1a1a;
      color:#fff;padding:12px 20px;border-radius:8px;font-size:13px;z-index:9999;
-     box-shadow:0 4px 20px rgba(0,0,0,.3);"></div>
+     box-shadow:0 4px 20px rgba(0,0,0,.3);transition:opacity .2s;"></div>
 
 <script>
 function setLibre(v) {
@@ -368,7 +393,10 @@ function toggleC(id, active) {
     fd.append('ajax', '1');
     fd.append('id', id);
     fd.append('value', active ? 1 : 0);
-    fetch('concepts.php', { method: 'POST', body: fd });
+    fd.append('_csrf', _csrf);
+    fetch('concepts.php', { method: 'POST', body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if(d.ok) showToast(active ? 'Activado' : 'Desactivado', true); });
 }
 
 function showToast(msg, ok) {
@@ -376,7 +404,8 @@ function showToast(msg, ok) {
     t.textContent = msg;
     t.style.background = ok ? '#1a7a3a' : '#c0392b';
     t.style.display = 'block';
-    setTimeout(function() { t.style.display = 'none'; }, 2500);
+    t.style.opacity = '1';
+    setTimeout(function() { t.style.opacity='0'; setTimeout(function(){t.style.display='none';t.style.opacity='1';},200); }, 2500);
 }
 </script>
 

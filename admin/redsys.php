@@ -3,14 +3,16 @@ $pageTitle = 'Configuracion Redsys';
 require_once __DIR__ . '/_header.php';
 $msg=''; $msgType='ok';
 if($_SERVER['REQUEST_METHOD']==='POST'){
+    Auth::checkCsrf();
     foreach(array('redsys_fuc','redsys_terminal','redsys_currency','redsys_environment','redsys_url_notify','redsys_url_ok','redsys_url_ko') as $k)
         setSetting($k, trim(isset($_POST[$k])?$_POST[$k]:''));
-    // Guardar clave SIEMPRE si el campo no esta vacio
     $newKey = trim(isset($_POST['redsys_secret_key'])?$_POST['redsys_secret_key']:'');
     if($newKey !== '') {
         setSetting('redsys_secret_key', $newKey);
+        Auth::logAction('redsys_config_save', 'clave actualizada');
         $msg='Configuracion Redsys guardada (clave actualizada).';
     } else {
+        Auth::logAction('redsys_config_save', 'sin cambio de clave');
         $msg='Configuracion Redsys guardada (clave sin cambios).';
     }
     $msgType='ok';
@@ -31,6 +33,7 @@ $autoKo="$proto://$host$base/pago/ko.php";
 ?>
 <?php if($msg): ?><div class="alert <?php echo $msgType; ?>"><?php echo $msg; ?></div><?php endif; ?>
 <form method="POST">
+<input type="hidden" name="_csrf" value="<?php echo htmlspecialchars(Auth::csrfToken()); ?>">
 <div class="card">
   <div class="card-t">Credenciales</div>
   <div class="r3">
@@ -63,7 +66,7 @@ $autoKo="$proto://$host$base/pago/ko.php";
            style="font-family:monospace;"
            value="">
     <p style="font-size:12px;color:#aaa;margin-top:4px;">
-      Dejalo vacio para mantener la clave actual. En entorno de pruebas: <code>sq7HjrUOBfKmC576ILgskD5srU870gJ7</code>
+      Dejalo vacio para mantener la clave actual. La clave de pruebas la encontraras en el TPV virtual de tu banco (entorno test).
     </p>
   </div>
 

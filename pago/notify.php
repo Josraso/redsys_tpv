@@ -3,7 +3,14 @@ require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/../lib/RedsysAPI.php';
 require_once __DIR__ . '/../lib/Mailer.php';
 
-function nlog($m){$d=__DIR__.'/../logs';if(!is_dir($d))@mkdir($d,0750,true);file_put_contents($d.'/notify.log',date('[Y-m-d H:i:s] ').$m.PHP_EOL,FILE_APPEND|LOCK_EX);}
+function nlog($m){
+    $d=__DIR__.'/../logs';
+    if(!is_dir($d))@mkdir($d,0750,true);
+    $f=$d.'/notify.log';
+    if(file_exists($f)&&filesize($f)>1048576)
+        @rename($f,$f.'.'.date('Ymd_His').'.bak');
+    file_put_contents($f,date('[Y-m-d H:i:s] ').$m.PHP_EOL,FILE_APPEND|LOCK_EX);
+}
 
 $params   = isset($_POST['Ds_MerchantParameters'])?$_POST['Ds_MerchantParameters']:'';
 $sig      = isset($_POST['Ds_Signature'])?$_POST['Ds_Signature']:'';

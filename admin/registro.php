@@ -19,7 +19,7 @@ if (isset($_GET['export'])) {
         $p[] = "%$fq%"; $p[] = "%$fq%"; $p[] = "%$fq%";
     }
     $ws   = implode(' AND ', $w);
-    $rows = db()->prepare("SELECT * FROM transactions WHERE $ws ORDER BY created_at DESC");
+    $rows = db()->prepare("SELECT * FROM transactions WHERE $ws ORDER BY created_at DESC LIMIT 10000");
     $rows->execute($p);
 
     header('Content-Type: text/csv; charset=UTF-8');
@@ -52,6 +52,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'resend' && !empty($_POST['a
     require_once __DIR__ . '/../lib/Auth.php';
     require_once __DIR__ . '/../lib/Mailer.php';
     Auth::requireLogin();
+    Auth::checkCsrf();
 
     $txId = (int)(isset($_POST['tx_id']) ? $_POST['tx_id'] : 0);
     $st   = db()->prepare('SELECT * FROM transactions WHERE id=? AND status="ok"');
@@ -67,6 +68,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'resend' && !empty($_POST['a
         $result  = $mailer->send($tx['customer_email'], $tx['customer_name'], $subject, Mailer::templateCliente($tx));
         if ($result['ok']) {
             db()->prepare('UPDATE transactions SET email_sent=1, email_error=NULL WHERE id=?')->execute(array($txId));
+            Auth::logAction('email_resend', 'tx_id=' . $txId . ' to=' . $tx['customer_email']);
             echo json_encode(array('ok' => true, 'msg' => 'Email reenviado a ' . $tx['customer_email']));
         } else {
             echo json_encode(array('ok' => false, 'msg' => 'Error: ' . $result['error']));
@@ -83,12 +85,14 @@ require_once __DIR__ . '/_header.php';
 // Limpiar transacciones no completadas
 $cleanMsg = '';
 if (isset($_POST['action']) && $_POST['action'] === 'clean_incomplete') {
+    Auth::checkCsrf();
     $deleted  = db()->exec("DELETE FROM transactions WHERE status IN ('pending','error','cancelled')");
     $cleanMsg = 'Eliminadas ' . $deleted . ' transacciones no completadas. Los pagos OK intactos.';
 }
 
 // Añadir nota interna
 if (isset($_POST['action']) && $_POST['action'] === 'save_note') {
+    Auth::checkCsrf();
     $txId = (int)$_POST['tx_id'];
     $note = trim(htmlspecialchars($_POST['note']));
     db()->prepare('UPDATE transactions SET notes=? WHERE id=?')->execute(array($note, $txId));
@@ -184,6 +188,7 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
     <?php endif; ?>
   </p>
   <form method="POST" onsubmit="return confirm('Eliminar pendientes y errores? Los pagos OK no se tocan.');">
+    <input type="hidden" name="_csrf" value="<?php echo htmlspecialchars(Auth::csrfToken()); ?>">
     <input type="hidden" name="action" value="clean_incomplete">
     <button type="submit" class="btn-s" style="color:#c00;border-color:#fcc;">
       Limpiar pendientes/errores
@@ -338,6 +343,7 @@ function saveNote() {
   fd.append('action', 'save_note');
   fd.append('tx_id', currentTxId);
   fd.append('note', note);
+  fd.append('_csrf', _csrf);
   fetch('registro.php', { method: 'POST', body: fd })
     .then(function() {
       document.getElementById('note-msg').style.display = 'inline';
@@ -355,6 +361,7 @@ function resendEmail(txId, btn) {
   fd.append('action', 'resend');
   fd.append('tx_id', txId);
   fd.append('ajax', '1');
+  fd.append('_csrf', _csrf);
   fetch('registro.php', { method: 'POST', body: fd })
     .then(function(r) { return r.json(); })
     .then(function(d) {

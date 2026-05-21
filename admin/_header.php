@@ -143,12 +143,12 @@ function badge($status)
     </div>
     <div class="content">
 <script>
+var _csrf = '<?php echo htmlspecialchars(Auth::csrfToken(), ENT_QUOTES, 'UTF-8'); ?>';
 function toggleDark(){
   var isDark=document.body.classList.toggle('dark');
   localStorage.setItem('darkMode',isDark?'1':'0');
   document.getElementById('dark-btn').textContent=isDark?'☀️ Claro':'🌙 Oscuro';
 }
-// Aplicar al cargar
 (function(){
   if(localStorage.getItem('darkMode')==='1'){
     document.body.classList.add('dark');
