@@ -80,7 +80,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'resend' && !empty($_POST['a
     exit;
 }
 
-// AJAX: archivar / desarchivar
+// AJAX: archivar / desarchivar (individual)
 if (isset($_POST['action']) && $_POST['action'] === 'archive' && !empty($_POST['ajax'])) {
     require_once __DIR__ . '/../lib/db.php';
     require_once __DIR__ . '/../lib/Auth.php';
@@ -99,6 +99,36 @@ if (isset($_POST['action']) && $_POST['action'] === 'archive' && !empty($_POST['
         db()->prepare('UPDATE transactions SET archived=? WHERE id=?')->execute(array($newVal, $txId));
         Auth::logAction('tx_archive', 'tx_id=' . $txId . ' archived=' . $newVal);
         echo json_encode(array('ok' => true, 'archived' => $newVal));
+    }
+    header('Content-Type: application/json');
+    exit;
+}
+
+// AJAX: archivar / desarchivar múltiples
+if (isset($_POST['action']) && $_POST['action'] === 'archive_bulk' && !empty($_POST['ajax'])) {
+    require_once __DIR__ . '/../lib/db.php';
+    require_once __DIR__ . '/../lib/Auth.php';
+    Auth::requireLogin();
+    Auth::checkCsrf();
+
+    $ids = isset($_POST['ids']) ? (array)$_POST['ids'] : array();
+    $ids = array_map('intval', array_filter($ids));
+
+    if (empty($ids)) {
+        echo json_encode(array('ok' => false, 'msg' => 'Sin registros seleccionados'));
+    } else {
+        // Verificar a cuantos va a cambiar (para saber si archiva o restaura)
+        $st = db()->prepare('SELECT COALESCE(MAX(archived),0) as maxArchived FROM transactions WHERE id IN (' . implode(',', $ids) . ')');
+        $st->execute();
+        $row = $st->fetch();
+        $newVal = $row['maxArchived'] ? 0 : 1; // Si alguno ya esta archivado, restaurar todos. Si ninguno esta archivado, archivar todos.
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        db()->prepare("UPDATE transactions SET archived=? WHERE id IN ($placeholders)")
+            ->execute(array_merge(array($newVal), $ids));
+
+        Auth::logAction('tx_archive_bulk', 'count=' . count($ids) . ' archived=' . $newVal);
+        echo json_encode(array('ok' => true, 'count' => count($ids), 'archived' => $newVal));
     }
     header('Content-Type: application/json');
     exit;
@@ -260,24 +290,37 @@ $qs     = $qsBase . ($qsBase ? '&' : '') . 'archived=' . $fa;
   <?php endif; ?>
 </div>
 
+<!-- Barra de acciones masivas -->
+<div id="bulk-actions-bar" style="display:none;position:fixed;bottom:24px;left:24px;right:24px;max-width:600px;
+     background:#1a1a1a;color:#fff;border-radius:8px;padding:14px 18px;box-shadow:0 8px 24px rgba(0,0,0,.3);
+     z-index:998;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+  <span id="bulk-count" style="font-size:13px;font-weight:600;"></span>
+  <div style="display:flex;gap:8px;">
+    <button onclick="clearSelection()" class="btn-s" style="background:#555;border-color:#555;color:#fff;">Deseleccionar</button>
+    <button id="bulk-btn" onclick="bulkArchive()" style="background:#1a7a3a;border:none;color:#fff;border-radius:6px;padding:7px 16px;font-size:13px;font-weight:600;cursor:pointer;"></button>
+  </div>
+</div>
+
 <!-- Tabla -->
 <div class="card">
   <div style="overflow-x:auto;">
   <table>
     <thead>
       <tr>
+        <th style="width:30px;"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)"></th>
         <th>Fecha</th><th>Cliente</th><th>Concepto</th>
         <th>Importe</th><th>Referencia</th><th>Email</th><th>Nota</th><th>Estado</th><th>Acciones</th>
       </tr>
     </thead>
     <tbody>
     <?php if (empty($rows)): ?>
-      <tr><td colspan="9" style="text-align:center;color:#aaa;padding:24px;">
+      <tr><td colspan="10" style="text-align:center;color:#aaa;padding:24px;">
         <?php echo $fa===1 ? 'No hay registros archivados' : 'Sin resultados'; ?>
       </td></tr>
     <?php endif; ?>
     <?php foreach ($rows as $tx): ?>
       <tr id="row-<?php echo $tx['id']; ?>" <?php echo $tx['archived']?'style="opacity:.55;"':''; ?>>
+        <td style="width:30px;"><input type="checkbox" class="tx-checkbox" value="<?php echo $tx['id']; ?>" onchange="updateBulkUI()"></td>
         <td style="white-space:nowrap;"><?php echo date('d/m/Y H:i', strtotime($tx['created_at'])); ?></td>
         <td>
           <div style="font-weight:500;"><?php echo htmlspecialchars($tx['customer_name']); ?></div>
@@ -555,6 +598,116 @@ function fmtDate(s) {
 document.getElementById('modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
+
+// Seleccion multiple
+function getSelectedIds() {
+  var checkboxes = document.querySelectorAll('.tx-checkbox:checked');
+  var ids = [];
+  checkboxes.forEach(function(cb) { ids.push(parseInt(cb.value)); });
+  return ids;
+}
+
+function updateBulkUI() {
+  var ids = getSelectedIds();
+  var bar = document.getElementById('bulk-actions-bar');
+  var countLabel = document.getElementById('bulk-count');
+  var selectAll = document.getElementById('select-all');
+  var totalCheckboxes = document.querySelectorAll('.tx-checkbox').length;
+  var checkedCheckboxes = document.querySelectorAll('.tx-checkbox:checked').length;
+
+  // Actualizar estado del checkbox "Seleccionar todo"
+  selectAll.indeterminate = (checkedCheckboxes > 0 && checkedCheckboxes < totalCheckboxes);
+  selectAll.checked = (checkedCheckboxes === totalCheckboxes && totalCheckboxes > 0);
+
+  if (ids.length > 0) {
+    countLabel.textContent = 'Seleccionados: ' + ids.length + ' registro' + (ids.length !== 1 ? 's' : '');
+    var isMostArchived = false;
+    // Verificar si la mayoria estan archivados
+    var archived = document.querySelectorAll('tr .tx-checkbox:checked');
+    if (archived.length > 0) {
+      var archCount = 0;
+      archived.forEach(function(cb) {
+        var row = cb.closest('tr');
+        if (row && row.style.opacity === '0.55') archCount++;
+      });
+      isMostArchived = archCount > (ids.length / 2);
+    }
+    document.getElementById('bulk-btn').textContent = isMostArchived ? '✓ Restaurar seleccionados' : '📦 Archivar seleccionados';
+    bar.style.display = 'flex';
+  } else {
+    bar.style.display = 'none';
+    selectAll.indeterminate = false;
+    selectAll.checked = false;
+  }
+}
+
+function toggleSelectAll(checked) {
+  document.querySelectorAll('.tx-checkbox').forEach(function(cb) { cb.checked = checked; });
+  updateBulkUI();
+}
+
+function clearSelection() {
+  document.querySelectorAll('.tx-checkbox').forEach(function(cb) { cb.checked = false; });
+  updateBulkUI();
+}
+
+function bulkArchive() {
+  var ids = getSelectedIds();
+  if (ids.length === 0) { alert('Selecciona al menos uno'); return; }
+
+  // Verificar si restaura o archiva
+  var isMostArchived = false;
+  var archCount = 0;
+  ids.forEach(function(id) {
+    var row = document.getElementById('row-' + id);
+    if (row && row.style.opacity === '0.55') archCount++;
+  });
+  isMostArchived = archCount > (ids.length / 2);
+
+  var msg = isMostArchived
+    ? 'Restaurar estos ' + ids.length + ' registro(s)?'
+    : 'Archivar estos ' + ids.length + ' registro(s)?';
+
+  if (!confirm(msg)) return;
+
+  var btn = document.getElementById('bulk-btn');
+  btn.disabled = true;
+  btn.textContent = 'Procesando...';
+
+  var fd = new FormData();
+  fd.append('action', 'archive_bulk');
+  fd.append('ajax', '1');
+  fd.append('_csrf', _csrf);
+  ids.forEach(function(id) { fd.append('ids[]', id); });
+
+  fetch('registro.php', { method: 'POST', body: fd })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        // Remover filas de la vista
+        ids.forEach(function(id) {
+          var row = document.getElementById('row-' + id);
+          if (row) {
+            row.style.transition = 'opacity .3s';
+            row.style.opacity = '0';
+            setTimeout(function() { row.remove(); }, 320);
+          }
+        });
+        showToast(d.archived ? d.count + ' registros restaurados' : d.count + ' registros archivados', true);
+        clearSelection();
+        updateBulkUI();
+      } else {
+        showToast('Error: ' + d.msg, false);
+        btn.disabled = false;
+        btn.textContent = isMostArchived ? '✓ Restaurar seleccionados' : '📦 Archivar seleccionados';
+      }
+    })
+    .catch(function(err) {
+      showToast('Error de conexion', false);
+      btn.disabled = false;
+      btn.textContent = isMostArchived ? '✓ Restaurar seleccionados' : '📦 Archivar seleccionados';
+    });
+}
 </script>
 
 <?php require_once __DIR__ . '/_footer.php'; ?>
