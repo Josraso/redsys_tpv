@@ -74,6 +74,10 @@ function runMigrations()
         if (!in_array('status_log', array_column($pdo->query("SHOW COLUMNS FROM transactions")->fetchAll(), 'Field')))
             $pdo->exec("ALTER TABLE transactions ADD COLUMN `status_log` TEXT DEFAULT NULL AFTER `notes`");
 
+        // transactions: archived
+        if (!in_array('archived', array_column($pdo->query("SHOW COLUMNS FROM transactions")->fetchAll(), 'Field')))
+            $pdo->exec("ALTER TABLE transactions ADD COLUMN `archived` TINYINT(1) NOT NULL DEFAULT 0 AFTER `status_log`");
+
         // Asegurar site_base_url en settings si no existe
         $existing = $pdo->query("SELECT value FROM settings WHERE `key`='site_base_url'")->fetchColumn();
         if (!$existing && isset($_SERVER['HTTP_HOST'])) {

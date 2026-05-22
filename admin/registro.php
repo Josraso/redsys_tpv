@@ -5,19 +5,21 @@ if (isset($_GET['export'])) {
     require_once __DIR__ . '/../lib/Auth.php';
     Auth::requireLogin();
 
-    $fs = isset($_GET['status'])  ? $_GET['status']  : '';
-    $fc = isset($_GET['concept']) ? $_GET['concept'] : '';
-    $fd = isset($_GET['date'])    ? $_GET['date']    : '';
-    $fq = trim(isset($_GET['q'])  ? $_GET['q']       : '');
+    $fs = isset($_GET['status'])   ? $_GET['status']   : '';
+    $fc = isset($_GET['concept'])  ? $_GET['concept']  : '';
+    $fd = isset($_GET['date'])     ? $_GET['date']     : '';
+    $fq = trim(isset($_GET['q'])   ? $_GET['q']        : '');
+    $fa = isset($_GET['archived']) ? (int)$_GET['archived'] : 0;
 
     $w = array('1=1'); $p = array();
-    if ($fs) { $w[] = 'status=?';        $p[] = $fs; }
-    if ($fc) { $w[] = 'concept_name=?';  $p[] = $fc; }
+    if ($fs) { $w[] = 'status=?';           $p[] = $fs; }
+    if ($fc) { $w[] = 'concept_name=?';     $p[] = $fc; }
     if ($fd) { $w[] = 'DATE(created_at)=?'; $p[] = $fd; }
     if ($fq) {
         $w[] = '(customer_name LIKE ? OR customer_email LIKE ? OR order_ref LIKE ?)';
         $p[] = "%$fq%"; $p[] = "%$fq%"; $p[] = "%$fq%";
     }
+    $w[] = 'archived=?'; $p[] = $fa;
     $ws   = implode(' AND ', $w);
     $rows = db()->prepare("SELECT * FROM transactions WHERE $ws ORDER BY created_at DESC LIMIT 10000");
     $rows->execute($p);
@@ -26,7 +28,7 @@ if (isset($_GET['export'])) {
     header('Content-Disposition: attachment; filename="pagos_' . date('Ymd_His') . '.csv"');
     header('Cache-Control: no-cache, no-store, must-revalidate');
     header('Pragma: no-cache');
-    echo "\xEF\xBB\xBF"; // BOM para Excel
+    echo "\xEF\xBB\xBF";
     $out = fopen('php://output', 'w');
     fputcsv($out, array('Fecha','Nombre','Email','Concepto','Importe EUR','Referencia','Autorizacion Redsys','Email enviado','Estado'), ';');
     while ($r = $rows->fetch()) {
@@ -37,7 +39,7 @@ if (isset($_GET['export'])) {
             $r['concept_name'],
             number_format((float)$r['amount'], 2, ',', '.'),
             $r['order_ref'],
-            $r['redsys_auth'] ? $r['redsys_auth'] : '',
+            $r['redsys_auth'] ?: '',
             $r['email_sent'] ? 'Si' : 'No',
             $r['status']
         ), ';');
@@ -46,7 +48,7 @@ if (isset($_GET['export'])) {
     exit;
 }
 
-// Reenvio de email AJAX
+// AJAX: reenviar email
 if (isset($_POST['action']) && $_POST['action'] === 'resend' && !empty($_POST['ajax'])) {
     require_once __DIR__ . '/../lib/db.php';
     require_once __DIR__ . '/../lib/Auth.php';
@@ -78,19 +80,44 @@ if (isset($_POST['action']) && $_POST['action'] === 'resend' && !empty($_POST['a
     exit;
 }
 
+// AJAX: archivar / desarchivar
+if (isset($_POST['action']) && $_POST['action'] === 'archive' && !empty($_POST['ajax'])) {
+    require_once __DIR__ . '/../lib/db.php';
+    require_once __DIR__ . '/../lib/Auth.php';
+    Auth::requireLogin();
+    Auth::checkCsrf();
+
+    $txId = (int)(isset($_POST['tx_id']) ? $_POST['tx_id'] : 0);
+    $st   = db()->prepare('SELECT archived FROM transactions WHERE id=?');
+    $st->execute(array($txId));
+    $row  = $st->fetch();
+
+    if (!$row) {
+        echo json_encode(array('ok' => false, 'msg' => 'No encontrado'));
+    } else {
+        $newVal = $row['archived'] ? 0 : 1;
+        db()->prepare('UPDATE transactions SET archived=? WHERE id=?')->execute(array($newVal, $txId));
+        Auth::logAction('tx_archive', 'tx_id=' . $txId . ' archived=' . $newVal);
+        echo json_encode(array('ok' => true, 'archived' => $newVal));
+    }
+    header('Content-Type: application/json');
+    exit;
+}
+
 // -- HTML normal --
 $pageTitle = 'Registro de pagos';
 require_once __DIR__ . '/_header.php';
 
-// Limpiar transacciones no completadas
 $cleanMsg = '';
+
+// Limpiar transacciones no completadas
 if (isset($_POST['action']) && $_POST['action'] === 'clean_incomplete') {
     Auth::checkCsrf();
     $deleted  = db()->exec("DELETE FROM transactions WHERE status IN ('pending','error','cancelled')");
-    $cleanMsg = 'Eliminadas ' . $deleted . ' transacciones no completadas. Los pagos OK intactos.';
+    $cleanMsg = array('ok', 'Eliminadas ' . $deleted . ' transacciones no completadas. Los pagos OK intactos.');
 }
 
-// Añadir nota interna
+// Guardar nota interna
 if (isset($_POST['action']) && $_POST['action'] === 'save_note') {
     Auth::checkCsrf();
     $txId = (int)$_POST['tx_id'];
@@ -98,21 +125,33 @@ if (isset($_POST['action']) && $_POST['action'] === 'save_note') {
     db()->prepare('UPDATE transactions SET notes=? WHERE id=?')->execute(array($note, $txId));
 }
 
-$fs   = isset($_GET['status'])  ? $_GET['status']  : '';
-$fc   = isset($_GET['concept']) ? $_GET['concept'] : '';
-$fd   = isset($_GET['date'])    ? $_GET['date']    : '';
-$fq   = trim(isset($_GET['q'])  ? $_GET['q']       : '');
+// Borrar TODOS los registros
+if (isset($_POST['action']) && $_POST['action'] === 'delete_all') {
+    Auth::checkCsrf();
+    $deleted  = db()->exec("DELETE FROM transactions");
+    Auth::logAction('delete_all_transactions', 'deleted=' . $deleted);
+    $cleanMsg = array('ok', 'Borrados todos los registros (' . $deleted . ' transacciones). La base de datos esta limpia.');
+}
+
+// Filtros
+$fs   = isset($_GET['status'])   ? $_GET['status']   : '';
+$fc   = isset($_GET['concept'])  ? $_GET['concept']  : '';
+$fd   = isset($_GET['date'])     ? $_GET['date']     : '';
+$fq   = trim(isset($_GET['q'])   ? $_GET['q']        : '');
+$fa   = isset($_GET['archived']) ? (int)$_GET['archived'] : 0; // 0=activos, 1=archivados
 $page = max(1, (int)(isset($_GET['page']) ? $_GET['page'] : 1));
-$pp   = 25;
+$pp   = 50;
 
 $w = array('1=1'); $p = array();
-if ($fs) { $w[] = 'status=?';        $p[] = $fs; }
-if ($fc) { $w[] = 'concept_name=?';  $p[] = $fc; }
+if ($fs) { $w[] = 'status=?';           $p[] = $fs; }
+if ($fc) { $w[] = 'concept_name=?';     $p[] = $fc; }
 if ($fd) { $w[] = 'DATE(created_at)=?'; $p[] = $fd; }
 if ($fq) {
     $w[] = '(customer_name LIKE ? OR customer_email LIKE ? OR order_ref LIKE ?)';
     $p[] = "%$fq%"; $p[] = "%$fq%"; $p[] = "%$fq%";
 }
+$w[] = 'archived=?'; $p[] = $fa;
+
 $ws    = implode(' AND ', $w);
 $total = db()->prepare("SELECT COUNT(*) FROM transactions WHERE $ws");
 $total->execute($p);
@@ -127,21 +166,41 @@ $cnames = db()->query("SELECT DISTINCT concept_name FROM transactions ORDER BY c
 $sum    = db()->prepare("SELECT COALESCE(SUM(amount),0) as t, COUNT(*) as c FROM transactions WHERE $ws AND status='ok'");
 $sum->execute($p);
 $sum    = $sum->fetch();
-$qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date'=>$fd,'q'=>$fq)));
+
+// Contadores para los tabs activos/archivados
+$countActive   = (int)db()->query("SELECT COUNT(*) FROM transactions WHERE archived=0")->fetchColumn();
+$countArchived = (int)db()->query("SELECT COUNT(*) FROM transactions WHERE archived=1")->fetchColumn();
+
+// QS base sin archived ni page para reusar en links de paginacion
+$qsBase = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date'=>$fd,'q'=>$fq)));
+$qs     = $qsBase . ($qsBase ? '&' : '') . 'archived=' . $fa;
 ?>
 
 <?php if ($cleanMsg): ?>
-<div class="alert ok"><?php echo htmlspecialchars($cleanMsg); ?></div>
+<div class="alert <?php echo $cleanMsg[0]; ?>"><?php echo htmlspecialchars($cleanMsg[1]); ?></div>
 <?php endif; ?>
+
+<!-- Tabs archivados/activos -->
+<div style="display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid #e8e8e8;">
+  <a href="registro.php?<?php echo $qsBase; ?>&archived=0"
+     style="padding:9px 18px;font-size:13px;font-weight:600;text-decoration:none;border-bottom:2px solid <?php echo $fa===0?'#1a1a1a':'transparent'; ?>;margin-bottom:-2px;color:<?php echo $fa===0?'#1a1a1a':'#888'; ?>;">
+    Activos <span style="background:#f0f0f0;border-radius:20px;padding:1px 8px;font-size:11px;font-weight:600;margin-left:4px;"><?php echo $countActive; ?></span>
+  </a>
+  <a href="registro.php?<?php echo $qsBase; ?>&archived=1"
+     style="padding:9px 18px;font-size:13px;font-weight:600;text-decoration:none;border-bottom:2px solid <?php echo $fa===1?'#1a1a1a':'transparent'; ?>;margin-bottom:-2px;color:<?php echo $fa===1?'#1a1a1a':'#888'; ?>;">
+    Archivados <span style="background:#f0f0f0;border-radius:20px;padding:1px 8px;font-size:11px;font-weight:600;margin-left:4px;"><?php echo $countArchived; ?></span>
+  </a>
+</div>
 
 <!-- Filtros -->
 <div class="card" style="padding:14px 18px;">
   <form method="GET" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+    <input type="hidden" name="archived" value="<?php echo $fa; ?>">
     <div>
       <label style="font-size:11px;color:#999;display:block;margin-bottom:3px;">Buscar</label>
       <input type="text" name="q" value="<?php echo htmlspecialchars($fq); ?>"
              placeholder="Nombre, email, referencia..."
-             style="width:180px;border:1px solid #ddd;border-radius:7px;padding:8px 10px;font-size:13px;">
+             style="width:190px;border:1px solid #ddd;border-radius:7px;padding:8px 10px;font-size:13px;">
     </div>
     <div>
       <label style="font-size:11px;color:#999;display:block;margin-bottom:3px;">Estado</label>
@@ -169,7 +228,7 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
              style="border:1px solid #ddd;border-radius:7px;padding:8px;font-size:13px;">
     </div>
     <button type="submit" class="btn" style="height:37px;">Filtrar</button>
-    <a href="registro.php" class="btn-o" style="height:37px;line-height:20px;">Limpiar</a>
+    <a href="registro.php?archived=<?php echo $fa; ?>" class="btn-o" style="height:37px;line-height:20px;">Limpiar</a>
     <a href="registro.php?<?php echo $qs; ?>&export=1"
        class="btn-o" style="height:37px;line-height:20px;">
       &#8595; Exportar CSV
@@ -177,16 +236,20 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
   </form>
 </div>
 
-<!-- Resumen + limpieza -->
+<!-- Resumen + acciones -->
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
   <p style="font-size:13px;color:#555;">
     <?php if ($sum['c'] > 0): ?>
-    <strong><?php echo (int)$sum['c']; ?></strong> pagos OK &mdash;
-    Total: <strong><?php echo number_format((float)$sum['t'],2,',','.'); ?> &euro;</strong>
+      <strong><?php echo (int)$sum['c']; ?></strong> pagos OK &mdash;
+      Total: <strong><?php echo number_format((float)$sum['t'],2,',','.'); ?> &euro;</strong>
+      <?php if ($total > $sum['c']): ?>
+        &nbsp;<span style="color:#aaa;">(<?php echo $total; ?> registros totales)</span>
+      <?php endif; ?>
     <?php else: ?>
-    Sin resultados para los filtros aplicados
+      Sin resultados para los filtros aplicados
     <?php endif; ?>
   </p>
+  <?php if ($fa === 0): ?>
   <form method="POST" onsubmit="return confirm('Eliminar pendientes y errores? Los pagos OK no se tocan.');">
     <input type="hidden" name="_csrf" value="<?php echo htmlspecialchars(Auth::csrfToken()); ?>">
     <input type="hidden" name="action" value="clean_incomplete">
@@ -194,6 +257,7 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
       Limpiar pendientes/errores
     </button>
   </form>
+  <?php endif; ?>
 </div>
 
 <!-- Tabla -->
@@ -208,10 +272,12 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
     </thead>
     <tbody>
     <?php if (empty($rows)): ?>
-      <tr><td colspan="8" style="text-align:center;color:#aaa;padding:24px;">Sin resultados</td></tr>
+      <tr><td colspan="9" style="text-align:center;color:#aaa;padding:24px;">
+        <?php echo $fa===1 ? 'No hay registros archivados' : 'Sin resultados'; ?>
+      </td></tr>
     <?php endif; ?>
     <?php foreach ($rows as $tx): ?>
-      <tr id="row-<?php echo $tx['id']; ?>">
+      <tr id="row-<?php echo $tx['id']; ?>" <?php echo $tx['archived']?'style="opacity:.55;"':''; ?>>
         <td style="white-space:nowrap;"><?php echo date('d/m/Y H:i', strtotime($tx['created_at'])); ?></td>
         <td>
           <div style="font-weight:500;"><?php echo htmlspecialchars($tx['customer_name']); ?></div>
@@ -229,9 +295,7 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
                 <span style="color:#c00;" title="<?php echo htmlspecialchars($tx['email_error'] ?: 'No enviado'); ?>">&#10007;</span>
               <?php endif; ?>
             </span>
-          <?php else: ?>
-            &mdash;
-          <?php endif; ?>
+          <?php else: ?>&mdash;<?php endif; ?>
         </td>
         <td style="text-align:center;" data-note-row="<?php echo (int)$tx['id']; ?>">
           <span data-note-row="<?php echo (int)$tx['id']; ?>" class="note-cell">
@@ -242,14 +306,20 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
           </span>
         </td>
         <td><?php echo badge($tx['status']); ?></td>
-        <td>
+        <td style="white-space:nowrap;">
           <button class="btn-s" onclick="showDetail(<?php echo htmlspecialchars(json_encode($tx)); ?>)">Ver</button>
-          <?php if ($tx['status'] === 'ok'): ?>
+          <?php if ($tx['status'] === 'ok' && !$tx['archived']): ?>
           <button class="btn-s" onclick="resendEmail(<?php echo $tx['id']; ?>, this)"
                   title="Reenviar justificante al cliente">
             Reenviar
           </button>
           <?php endif; ?>
+          <button class="btn-s" id="arch-btn-<?php echo $tx['id']; ?>"
+                  onclick="archiveTx(<?php echo $tx['id']; ?>, this)"
+                  title="<?php echo $tx['archived']?'Restaurar registro':'Archivar registro'; ?>"
+                  style="<?php echo $tx['archived']?'color:#1a7a3a;border-color:#b7e4c7;':'color:#888;'; ?>">
+            <?php echo $tx['archived'] ? 'Restaurar' : 'Archivar'; ?>
+          </button>
         </td>
       </tr>
     <?php endforeach; ?>
@@ -257,20 +327,55 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
   </table>
   </div>
 
+  <!-- Paginacion -->
   <?php if ($pages > 1): ?>
-  <div style="display:flex;gap:5px;margin-top:14px;flex-wrap:wrap;">
-    <?php for ($i = 1; $i <= $pages; $i++): ?>
+  <div style="display:flex;gap:5px;margin-top:14px;flex-wrap:wrap;align-items:center;">
+    <?php if ($page > 1): ?>
+    <a href="?<?php echo $qs; ?>&page=<?php echo $page-1; ?>"
+       style="padding:5px 12px;border:1px solid #ddd;border-radius:5px;font-size:12px;text-decoration:none;color:#555;background:#fff;">&larr;</a>
+    <?php endif; ?>
+    <?php
+    $pStart = max(1, $page - 3);
+    $pEnd   = min($pages, $page + 3);
+    if ($pStart > 1): ?><span style="font-size:12px;color:#aaa;padding:0 4px;">1 &hellip;</span><?php endif;
+    for ($i = $pStart; $i <= $pEnd; $i++): ?>
       <a href="?<?php echo $qs; ?>&page=<?php echo $i; ?>"
-         style="padding:4px 10px;border:1px solid <?php echo $i===$page?'#1a1a1a':'#ddd';?>;
+         style="padding:5px 10px;border:1px solid <?php echo $i===$page?'#1a1a1a':'#ddd';?>;
                 border-radius:5px;font-size:12px;text-decoration:none;
                 color:<?php echo $i===$page?'#fff':'#555';?>;
                 background:<?php echo $i===$page?'#1a1a1a':'#fff';?>;">
         <?php echo $i; ?>
       </a>
-    <?php endfor; ?>
+    <?php endfor;
+    if ($pEnd < $pages): ?><span style="font-size:12px;color:#aaa;padding:0 4px;">&hellip; <?php echo $pages; ?></span><?php endif; ?>
+    <?php if ($page < $pages): ?>
+    <a href="?<?php echo $qs; ?>&page=<?php echo $page+1; ?>"
+       style="padding:5px 12px;border:1px solid #ddd;border-radius:5px;font-size:12px;text-decoration:none;color:#555;background:#fff;">&rarr;</a>
+    <?php endif; ?>
+    <span style="font-size:12px;color:#aaa;margin-left:6px;">Pagina <?php echo $page; ?> de <?php echo $pages; ?> (<?php echo $total; ?> registros)</span>
   </div>
   <?php endif; ?>
 </div>
+
+<!-- Zona peligrosa -->
+<div class="card" style="border:1px solid #fcc;margin-top:8px;">
+  <div class="card-t" style="color:#c0392b;">Zona de peligro</div>
+  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+    <div style="flex:1;min-width:220px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:3px;">Borrar todos los registros</div>
+      <div style="font-size:12px;color:#888;">Elimina permanentemente todas las transacciones. Util para empezar desde cero tras pruebas.</div>
+    </div>
+    <button onclick="deleteAllRecords()"
+            style="background:#c0392b;color:#fff;border:none;border-radius:7px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">
+      &#9888; Borrar todos los registros
+    </button>
+  </div>
+</div>
+
+<form method="POST" id="form-delete-all" style="display:none;">
+  <input type="hidden" name="_csrf" value="<?php echo htmlspecialchars(Auth::csrfToken()); ?>">
+  <input type="hidden" name="action" value="delete_all">
+</form>
 
 <!-- Modal detalle -->
 <div id="modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;
@@ -282,8 +387,6 @@ $qs     = http_build_query(array_filter(array('status'=>$fs,'concept'=>$fc,'date
       <button onclick="closeModal()" style="border:none;background:none;font-size:22px;cursor:pointer;color:#888;">&times;</button>
     </div>
     <div id="modal-body"></div>
-
-    <!-- Nota interna -->
     <div style="margin-top:16px;padding-top:16px;border-top:1px solid #f0f0f0;">
       <label style="font-size:12px;color:#888;display:block;margin-bottom:6px;">Nota interna (solo visible en el admin)</label>
       <textarea id="modal-note" rows="3"
@@ -316,6 +419,7 @@ function showDetail(tx) {
     ['IP cliente', tx.customer_ip || '-'],
     ['Email enviado', tx.email_sent ? 'Si' : 'No'],
     ['Error email', tx.email_error || '-'],
+    ['Archivado', tx.archived ? 'Si' : 'No'],
     ['Fecha', fmtDate(tx.created_at)],
     ['Actualizado', fmtDate(tx.updated_at)],
     ['Historial estados', (tx.status_log||'').replace(/\n/g,'<br>')]
@@ -348,15 +452,13 @@ function saveNote() {
     .then(function() {
       document.getElementById('note-msg').style.display = 'inline';
       setTimeout(function() { document.getElementById('note-msg').style.display = 'none'; }, 2000);
-      // Actualizar icono de nota en la fila de la tabla
       updateNoteIcon(currentTxId, note);
     });
 }
 
 function resendEmail(txId, btn) {
   if (!confirm('Reenviar el justificante al cliente?')) return;
-  btn.disabled = true;
-  btn.textContent = '...';
+  btn.disabled = true; btn.textContent = '...';
   var fd = new FormData();
   fd.append('action', 'resend');
   fd.append('tx_id', txId);
@@ -369,24 +471,59 @@ function resendEmail(txId, btn) {
       if (d.ok) {
         var el = document.getElementById('email-status-' + txId);
         if (el) el.innerHTML = '<span style="color:#1a7a3a;" title="Email enviado">&#10003;</span>';
-        // Actualizar tambien el modal si esta abierto
-        if (currentTxId == txId) {
-            var rows2 = document.querySelectorAll('#modal-body tr');
-            rows2.forEach(function(r) {
-                if (r.cells[0] && r.cells[0].textContent === 'Email enviado') {
-                    r.cells[1].textContent = 'Si';
-                }
-            });
-        }
       }
-      btn.disabled = false;
-      btn.textContent = 'Reenviar';
+      btn.disabled = false; btn.textContent = 'Reenviar';
+    })
+    .catch(function() {
+      showToast('Error de conexion', false);
+      btn.disabled = false; btn.textContent = 'Reenviar';
+    });
+}
+
+function archiveTx(txId, btn) {
+  var isArchived = btn.textContent.trim() === 'Restaurar';
+  var msg = isArchived ? 'Restaurar este registro?' : 'Archivar este registro? Ya no se mostrara en la vista principal.';
+  if (!confirm(msg)) return;
+  btn.disabled = true; btn.textContent = '...';
+  var fd = new FormData();
+  fd.append('action', 'archive');
+  fd.append('tx_id', txId);
+  fd.append('ajax', '1');
+  fd.append('_csrf', _csrf);
+  fetch('registro.php', { method: 'POST', body: fd })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        // Quitar la fila de la vista actual
+        var row = document.getElementById('row-' + txId);
+        if (row) {
+          row.style.transition = 'opacity .3s';
+          row.style.opacity = '0';
+          setTimeout(function() { row.remove(); }, 320);
+        }
+        showToast(d.archived ? 'Registro archivado' : 'Registro restaurado', true);
+      } else {
+        showToast('Error: ' + d.msg, false);
+        btn.disabled = false;
+        btn.textContent = isArchived ? 'Restaurar' : 'Archivar';
+      }
     })
     .catch(function() {
       showToast('Error de conexion', false);
       btn.disabled = false;
-      btn.textContent = 'Reenviar';
+      btn.textContent = isArchived ? 'Restaurar' : 'Archivar';
     });
+}
+
+function deleteAllRecords() {
+  if (!confirm('ATENCION: Vas a borrar TODOS los registros de pago.\n\nEsta accion no se puede deshacer.')) return;
+  var typed = prompt('Para confirmar escribe exactamente la palabra:\n\nBORRAR');
+  if (typed === null) return;
+  if (typed.trim() !== 'BORRAR') {
+    alert('Texto incorrecto. Operacion cancelada.');
+    return;
+  }
+  document.getElementById('form-delete-all').submit();
 }
 
 function showToast(msg, ok) {
@@ -397,45 +534,24 @@ function showToast(msg, ok) {
   setTimeout(function() { t.style.display = 'none'; }, 3500);
 }
 
-// Actualizar icono de nota en la fila
 function updateNoteIcon(txId, note) {
-    // Buscar la celda de nota en la fila
-    var row = document.getElementById('row-' + txId);
-    if (!row) return;
-    // La celda de nota es la antepenultima (antes de estado y acciones)
-    var cells = row.querySelectorAll('td');
-    // Celda nota: buscar por posicion (6 = nota, tras fecha,cliente,concepto,importe,ref,email)
-    var noteCell = null;
-    cells.forEach(function(c) {
-        if (c.querySelector && c.querySelector('.note-icon')) noteCell = c;
-    });
-    // Si no encontramos por clase, buscar por contenido
-    if (!noteCell) {
-        // Buscar celda que tenga solo el icono o este vacia (segun posicion)
-        // Usamos data attribute
+  var iconEl = document.querySelector('.note-cell[data-note-row="' + txId + '"]');
+  if (iconEl) {
+    if (note.trim()) {
+      iconEl.innerHTML = '<span class="note-icon" title="' + note.replace(/"/g,"'") + '" style="cursor:pointer;font-size:15px;">&#128161;</span>';
+    } else {
+      iconEl.innerHTML = '';
     }
-    // Actualizar via data-txid
-    // Seleccionar el span con clase note-cell que tenga el data-note-row
-    var iconEl = document.querySelector('.note-cell[data-note-row="' + txId + '"]');
-    if (iconEl) {
-        if (note.trim()) {
-            iconEl.innerHTML = '<span class="note-icon" title="' + note.replace(/"/g,"'") + '" style="cursor:pointer;font-size:15px;">&#128161;</span>';
-        } else {
-            iconEl.innerHTML = '';
-        }
-    }
+  }
 }
 
-// Formatear fecha ISO a español: 2025-05-04 21:28:22 -> 04/05/2025 21:28
 function fmtDate(s) {
-    if (!s) return '-';
-    // Formato ISO: YYYY-MM-DD HH:MM:SS
-    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2})/);
-    if (m) return m[3] + '/' + m[2] + '/' + m[1] + ' ' + m[4] + ':' + m[5];
-    return s;
+  if (!s) return '-';
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2})/);
+  if (m) return m[3] + '/' + m[2] + '/' + m[1] + ' ' + m[4] + ':' + m[5];
+  return s;
 }
 
-// Cerrar modal al clicar fuera
 document.getElementById('modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });

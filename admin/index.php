@@ -9,6 +9,11 @@ $todayOk   = (float)db()->query("SELECT COALESCE(SUM(amount),0) FROM transaction
 $thisMonth = (float)db()->query("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE status='ok' AND YEAR(created_at)=YEAR(NOW()) AND MONTH(created_at)=MONTH(NOW())")->fetchColumn();
 
 $recent    = db()->query("SELECT * FROM transactions ORDER BY created_at DESC LIMIT 8")->fetchAll();
+
+// Conceptos activos con fecha_limite vencida
+$conceptosVencidos = db()->query(
+    "SELECT id, name, fecha_limite FROM concepts WHERE active=1 AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()"
+)->fetchAll();
 $byConcept = db()->query("SELECT concept_name, COUNT(*) as cnt, SUM(amount) as total FROM transactions WHERE status='ok' GROUP BY concept_name ORDER BY total DESC")->fetchAll();
 
 // Datos grafico ultimos 30 dias
@@ -27,6 +32,28 @@ for ($i = 29; $i >= 0; $i--) {
     $chartCnts[]    = isset($diasMap[$d]) ? (int)$diasMap[$d]['cnt']     : 0;
 }
 ?>
+
+<?php if (!empty($conceptosVencidos)): ?>
+<div class="alert err" style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;">
+  <span style="font-size:20px;flex-shrink:0;">⚠️</span>
+  <div>
+    <strong>Conceptos con fecha de caducidad vencida</strong>
+    <div style="margin-top:6px;font-size:13px;">
+      Los siguientes conceptos siguen activos pero su fecha limite ya paso.
+      Los nuevos pagos quedan bloqueados automaticamente, pero deberias desactivarlos manualmente:
+    </div>
+    <ul style="margin-top:8px;padding-left:18px;font-size:13px;line-height:1.8;">
+      <?php foreach ($conceptosVencidos as $cv): ?>
+      <li>
+        <strong><?php echo htmlspecialchars($cv['name']); ?></strong>
+        &mdash; vencio el <?php echo date('d/m/Y', strtotime($cv['fecha_limite'])); ?>
+        &nbsp;<a href="concepts.php" style="color:#c0392b;text-decoration:underline;">Gestionar &rarr;</a>
+      </li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- Metricas -->
 <div class="metrics">
